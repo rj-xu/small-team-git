@@ -1,0 +1,25 @@
+[project]
+name = "small-team-git"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "gitpython>=3.1.45",
+    "typer>=0.17.4",
+]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "C",  # McCabe complexity
+    "I",  # isort   
+    "N",  # flake8-nitpick
+    "UP",  # pyupgrade
+    "B",  # black
+]
