@@ -54,11 +54,6 @@ def commit_info(c: git.Commit):
 
 
 @app.command()
-def tree():
-    pass
-
-
-@app.command()
 def commit(msg: str = "update"):
     if not repo.is_dirty(untracked_files=True):
         return
@@ -83,7 +78,7 @@ def push():
     typer.echo("🔼 Push END")
 
 
-def reset_(c: git.Commit):
+def _reset(c: git.Commit):
     typer.echo("🪓 Reset START")
     repo.git.reset(c)
     typer.echo("🪓 Reset END")
@@ -92,7 +87,7 @@ def reset_(c: git.Commit):
 @app.command()
 def reset():
     base = find_base()
-    reset_(base)
+    _reset(base)
 
 
 @app.command()
@@ -113,9 +108,9 @@ def force_push():
     typer.echo("⏫ Force Push END")
 
 
-def squash_(base: git.Commit, msg: str, *, need_push: bool):
+def _squash(base: git.Commit, msg: str, *, need_push: bool):
     typer.echo("🧹 Squash START")
-    reset_(base)
+    _reset(base)
     commit(msg)
     if need_push:
         force_push()
@@ -125,7 +120,7 @@ def squash_(base: git.Commit, msg: str, *, need_push: bool):
 @app.command()
 def squash(msg: str = "squash"):
     base = find_base()
-    squash_(base, msg=msg, need_push=True)
+    _squash(base, msg=msg, need_push=True)
 
 
 def try_rebase(autostash: bool):
@@ -135,7 +130,6 @@ def try_rebase(autostash: bool):
         typer.echo("🌳 Rebase END")
     except git.GitCommandError:
         return False
-    # force_push()
     return True
 
 
@@ -146,7 +140,6 @@ def try_pull_rebase(autostash: bool):
         typer.echo("🌳 Rebase END")
     except git.GitCommandError:
         return False
-    # force_push()
     return True
 
 
@@ -157,7 +150,7 @@ def abort():
 
 
 def squash_conflict(rebase_func: Callable[[bool], bool], base: git.Commit):
-    squash_(base, "rebase", need_push=False)
+    _squash(base, "rebase", need_push=False)
     if not rebase_func(False):
         typer.echo("💥 Please resolve Conflict manually, then Sync")
         return False
@@ -170,7 +163,7 @@ def resolve_conflict(func: Callable[[bool], bool], base: git.Commit):
         abort()
         if typer.confirm("🚨 Squash and try again?"):
             return squash_conflict(func, base)
-        typer.echo("🚨 CANCELLED")
+        typer.echo("🌳 Rebase CANCELLED")
         return False
     return True
 
@@ -223,10 +216,10 @@ def sync():
                 typer.echo("🔄️ Sync: Pull your-origin commits")
                 pull()
             else:
-                typer.echo("🚨 Found fork")
-                if typer.confirm("🚨 Do you want Pull your-origin code?"):
+                typer.echo("🚨 Found Fork")
+                if typer.confirm("🚨 Keep your-origin code?"):
                     resolve_conflict(try_pull_rebase, find_base(my, my_origin))
-                elif typer.confirm("🚨 Do you want to Force-Push your code?"):
+                elif typer.confirm("🚨 Keep your code?"):
                     force_push()
                 else:
                     typer.echo("🔄️ Sync CANCELLED")
@@ -264,8 +257,13 @@ def stash():
 
 
 @app.command()
-def submod():
-    pass
+def submod(use_latest: bool = False):
+    typer.echo("📦 Submodule START")
+    args = ["update", "--init", "--recursive", "--force"]
+    if use_latest:
+        args.append("--remote")
+    repo.git.submodule(args)
+    typer.echo("📦 Submodule END")
 
 
 if __name__ == "__main__":
