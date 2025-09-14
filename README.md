@@ -1,2 +1,1 @@
-master change
-my unstaged change
+master
