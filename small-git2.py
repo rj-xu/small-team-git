@@ -1,5 +1,6 @@
 # noqa: INP001
 from collections.abc import Callable
+from enum import StrEnum
 from typing import cast
 
 import git
@@ -54,6 +55,11 @@ def commit_info(c: git.Commit):
 
 
 @app.command()
+def tree():
+    pass
+
+
+@app.command()
 def commit(msg: str = "update"):
     if not repo.is_dirty(untracked_files=True):
         return
@@ -104,7 +110,7 @@ def force_push():
             # origin.push(my.name, force=True)
             typer.echo("🚨 Input this in termial: git push --force")
         else:
-            typer.echo("⏫ Push STOP")
+            typer.echo("⏫ Push CANCELLED")
     typer.echo("⏫ Force Push END")
 
 
@@ -125,7 +131,9 @@ def squash(msg: str = "squash"):
 
 def try_rebase(autostash: bool):
     try:
+        typer.echo("🌳 Rebase START")
         repo.git.rebase(master.commit, autostash=autostash)
+        typer.echo("🌳 Rebase END")
     except git.GitCommandError:
         return False
     # force_push()
@@ -134,7 +142,9 @@ def try_rebase(autostash: bool):
 
 def try_pull_rebase(autostash: bool):
     try:
+        typer.echo("🌳 Rebase START")
         origin.pull(rebase=True, autostash=autostash)
+        typer.echo("🌳 Rebase END")
     except git.GitCommandError:
         return False
     # force_push()
@@ -161,7 +171,7 @@ def resolve_conflict(func: Callable[[bool], bool], base: git.Commit):
         abort()
         if typer.confirm("🚨 Squash and try again?"):
             return squash_conflict(func, base)
-        typer.echo("🚨 STOP")
+        typer.echo("🚨 CANCELLED")
         return False
     return True
 
@@ -182,9 +192,7 @@ def rebase():
         typer.echo("✅ Already up to date with master")
         return
 
-    typer.echo("🌳 Rebase START")
     rc = resolve_conflict(try_rebase, base)
-    typer.echo("🌳 Rebase END")
 
     if rc:
         force_push()
@@ -217,12 +225,12 @@ def sync():
                 pull()
             else:
                 typer.echo("🚨 Found fork")
-                if typer.confirm("🚨 Sync: Do you want your-origin code?"):
+                if typer.confirm("🚨 Do you want Pull your-origin code?"):
                     resolve_conflict(try_pull_rebase, find_base(my, my_origin))
-                elif typer.confirm("🚨 Sync: Do you want to Force-Push your code?"):
+                elif typer.confirm("🚨 Do you want to Force-Push your code?"):
                     force_push()
                 else:
-                    typer.echo("🔄️ Sync STOP")
+                    typer.echo("🔄️ Sync CANCELLED")
     typer.echo("🔄️ Sync END")
 
 
@@ -239,21 +247,26 @@ def stash():
                 # repo.git.stash("drop")
                 typer.echo("🚨 Input this in your termial: git stash drop")
             else:
-                typer.echo("📁 Stash STOP")
+                typer.echo("📁 Stash CANCELLED")
         case True, False:
             if typer.confirm("📁 Do you want to Stash?"):
                 repo.git.stash("push")
             else:
-                typer.echo("📁 Stash STOP")
+                typer.echo("📁 Stash CANCELLED")
         case False, True:
             if typer.confirm("📁 Do you want to Pop?"):
                 repo.git.stash("pop")
             else:
-                typer.echo("📁 Stash STOP")
+                typer.echo("📁 Stash CANCELLED")
         case _:
             raise TypeError
 
     typer.echo("📁 Stash END")
+
+
+@app.command()
+def submod():
+    pass
 
 
 if __name__ == "__main__":

@@ -26,4 +26,5 @@
     "git.replaceTagsWhenPull": true,
     "git.showPushSuccessNotification": true,
     "git.smartCommitChanges": "all",
+    "python.analysis.autoFormatStrings": true,
 }
