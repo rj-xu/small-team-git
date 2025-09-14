@@ -112,8 +112,7 @@ def squash(msg: str = "squash"):
 
 def try_rebase():
     try:
-        a = repo.git.rebase(master.commit, autostash=True)
-        typer.echo(f"{a=}")
+        repo.git.rebase(master.commit, autostash=True)
     except git.GitCommandError:
         return False
     force_push()
