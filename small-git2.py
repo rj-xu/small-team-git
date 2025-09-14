@@ -150,7 +150,10 @@ def try_pull_rebase(autostash: bool):
 @app.command()
 def abort():
     typer.echo("🛑 Abort Rebase")
-    repo.git.rebase(abort=True)
+    try:
+        repo.git.rebase(abort=True)
+    except git.GitCommandError:
+        typer.echo("🛑 Abort Rebase Failed")
 
 
 def squash_conflict(rebase_func: Callable[[bool], bool], base: git.Commit):
@@ -198,8 +201,8 @@ def sync():
     fetch()
 
     if my.name not in origin.refs:
-        rc = squash_conflict(try_rebase, find_base())
-        if rc:
+        base = find_base()
+        if base.commit == master.commit or squash_conflict(try_rebase, base):
             push()
     else:
         my_origin = origin.refs[my.name]
