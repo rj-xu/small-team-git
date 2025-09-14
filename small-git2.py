@@ -97,7 +97,7 @@ def force_push():
         origin.push(my.name, force_with_lease=True)
     except git.GitCommandError:
         if (
-            typer.confirm("🚨 Someone Push into your-origin, OVERWRITE his code?")
+            typer.confirm("🚨 Someone worked at your-origin, OVERWRITE his code?")
             and typer.confirm("🚨 His code may be usefull, continue?")
             and typer.confirm("🚨 Are you sure?")
         ):
@@ -124,22 +124,26 @@ def squash(msg: str = "squash"):
 
 
 def try_rebase(autostash: bool):
+    typer.echo("🌳 Rebase START")
+
     try:
-        typer.echo("🌳 Rebase START")
         repo.git.rebase(master.commit, autostash=autostash)
-        typer.echo("🌳 Rebase END")
     except git.GitCommandError:
         return False
+
+    typer.echo("🌳 Rebase END")
     return True
 
 
 def try_pull_rebase(autostash: bool):
+    typer.echo("🌳 Pull-Rebase START")
+
     try:
-        typer.echo("🌳 Rebase START")
         origin.pull(rebase=True, autostash=autostash)
-        typer.echo("🌳 Rebase END")
     except git.GitCommandError:
         return False
+
+    typer.echo("🌳 Pull-Rebase END")
     return True
 
 
@@ -152,7 +156,7 @@ def abort():
 def squash_conflict(rebase_func: Callable[[bool], bool], base: git.Commit):
     _squash(base, "rebase", need_push=False)
     if not rebase_func(False):
-        typer.echo("💥 Please resolve Conflict manually, then Sync")
+        typer.echo("💥 Please resolve Conflict manually, then 🔄️ Sync")
         return False
     return True
 
@@ -164,28 +168,25 @@ def resolve_conflict(func: Callable[[bool], bool], base: git.Commit):
         if typer.confirm("🚨 Squash and try again?"):
             return squash_conflict(func, base)
         typer.echo("🌳 Rebase CANCELLED")
+        typer.echo("🌳 Rebase END")
         return False
     return True
 
 
 def fetch():
-    typer.echo("🌐 Fetch START")
+    typer.echo("🔃 Fetch START")
     origin.fetch(prune=True, tags=True, prune_tags=True)
-    typer.echo("🌐 Fetch End")
+    typer.echo("🔃 Fetch End")
 
 
 @app.command()
 def rebase():
-    fetch()
-
+    sync()
     base = find_base()
-
     if master.commit == base:
         typer.echo("✅ Already up to date with master")
         return
-
     rc = resolve_conflict(try_rebase, base)
-
     if rc:
         force_push()
 
@@ -197,9 +198,7 @@ def sync():
     fetch()
 
     if my.name not in origin.refs:
-        typer.echo("🌳 Rebase START")
         rc = squash_conflict(try_rebase, find_base())
-        typer.echo("🌳 Rebase END")
         if rc:
             push()
     else:
@@ -217,7 +216,12 @@ def sync():
                 pull()
             else:
                 typer.echo("🚨 Found Fork")
-                if typer.confirm("🚨 Keep your-origin code?"):
+                my_base = find_base()
+                my_origin_base = find_base(my_origin, master)
+
+                if my_base.committed_datetime > my_origin_base.committed_datetime:
+                    force_push()
+                elif typer.confirm("🚨 Keep your-origin code?"):
                     resolve_conflict(try_pull_rebase, find_base(my, my_origin))
                 elif typer.confirm("🚨 Keep your code?"):
                     force_push()
@@ -258,12 +262,35 @@ def stash():
 
 @app.command()
 def submod(use_latest: bool = False):
-    typer.echo("📦 Submodule START")
+    typer.echo("📦 Submodule-Update START")
     args = ["update", "--init", "--recursive", "--force"]
     if use_latest:
         args.append("--remote")
     repo.git.submodule(args)
-    typer.echo("📦 Submodule END")
+    typer.echo("📦 Submodule-Update END")
+
+
+@app.command()
+def zen():
+    z = [
+        "Always keep the tree structure, linear history",
+        "A commit doesn't matter, the total amount of commits matters",
+        "Only three branches, yours, your origin, master",
+        "Be responsible for your own branch",
+        r"         ",
+        r"    |    ",
+        r"    ●    ",
+        r" |  |    ",
+        r" ●  ●    ",
+        r"  \ |  | ",
+        r"    ●  ● ",
+        r"    | /  ",
+        r"    ●    ",
+        r"    |    ",
+        r"         ",
+    ]
+    for line in z:
+        typer.echo(line)
 
 
 if __name__ == "__main__":
