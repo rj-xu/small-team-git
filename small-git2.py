@@ -91,8 +91,10 @@ def reset():
 
 
 @app.command()
-def force_push():
-    typer.echo("⏫ Force Push START")
+def force_push() -> bool:
+    typer.echo("⏫ Force-Push START")
+    rc = True
+
     try:
         origin.push(my.name, force_with_lease=True)
     except git.GitCommandError:
@@ -104,8 +106,11 @@ def force_push():
             # origin.push(my.name, force=True)
             typer.echo("🚨 Input this in termial: git push --force")
         else:
-            typer.echo("⏫ Push CANCELLED")
-    typer.echo("⏫ Force Push END")
+            typer.echo("⏫ Force-Push CANCELLED")
+        rc = False
+
+    typer.echo("⏫ Force-Push END")
+    return rc
 
 
 def _squash(base: git.Commit, msg: str, *, need_push: bool):
@@ -123,7 +128,7 @@ def squash(msg: str = "squash"):
     _squash(base, msg=msg, need_push=True)
 
 
-def try_rebase(autostash: bool):
+def try_rebase(autostash: bool) -> bool:
     typer.echo("🌳 Rebase START")
 
     try:
@@ -135,7 +140,7 @@ def try_rebase(autostash: bool):
     return True
 
 
-def try_pull_rebase(autostash: bool):
+def try_pull_rebase(autostash: bool) -> bool:
     typer.echo("🌳 Pull-Rebase START")
 
     try:
@@ -148,15 +153,17 @@ def try_pull_rebase(autostash: bool):
 
 
 @app.command()
-def abort():
+def abort() -> bool:
     typer.echo("🛑 Abort Rebase")
     try:
         repo.git.rebase(abort=True)
     except git.GitCommandError:
         typer.echo("🛑 Abort Rebase Failed")
+        return False
+    return True
 
 
-def squash_conflict(rebase_func: Callable[[bool], bool], base: git.Commit):
+def squash_conflict(rebase_func: Callable[[bool], bool], base: git.Commit) -> bool:
     _squash(base, "rebase", need_push=False)
     if not rebase_func(False):
         typer.echo("💥 Please resolve Conflict manually, then 🔄️ Sync")
@@ -164,7 +171,7 @@ def squash_conflict(rebase_func: Callable[[bool], bool], base: git.Commit):
     return True
 
 
-def resolve_conflict(func: Callable[[bool], bool], base: git.Commit):
+def resolve_conflict(func: Callable[[bool], bool], base: git.Commit) -> bool:
     if not func(True):
         typer.echo("🚨 Found Conflict")
         abort()
@@ -215,8 +222,9 @@ def sync():
                 typer.echo("🔄️ Sync: Push your commits")
                 push()
             elif my_ahead == 0 and my_origin_ahead > 0:
-                typer.echo("🔄️ Sync: Pull your-origin commits")
-                pull()
+                if not force_push():
+                    typer.echo("🔄️ Sync: Pull your-origin commits")
+                    pull()
             else:
                 typer.echo("🚨 Found Fork")
                 my_base = find_base()
