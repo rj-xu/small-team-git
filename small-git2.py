@@ -270,5 +270,28 @@ def submod(use_latest: bool = False):
     typer.echo("📦 Submodule-Update END")
 
 
+@app.command()
+def zen():
+    z = [
+        "Always keep the tree structure, linear history",
+        "A commit doesn't matter, the total amount of commits matters",
+        "Only three branches, yours, your origin, master",
+        "Be responsible for your own branch",
+        r"         ",
+        r"    |    ",
+        r"    ●    ",
+        r" |  |    ",
+        r" ●  ●    ",
+        r"  \ |  | ",
+        r"    ●  ● ",
+        r"    | /  ",
+        r"    ●    ",
+        r"    |    ",
+        r"         ",
+    ]
+    for line in z:
+        typer.echo(line)
+
+
 if __name__ == "__main__":
     app()
