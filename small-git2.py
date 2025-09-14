@@ -19,7 +19,7 @@ if "master" in origin.refs:
 elif "main" in origin.refs:
     master = origin.refs["main"]
 else:
-    raise ValueError("No master or main branch found")
+    raise ValueError
 
 my = repo.active_branch
 assert my.name not in ("master", "main")
@@ -65,7 +65,19 @@ def commit(msg: str = "update"):
     typer.echo("💾 Commit END")
 
 
-def _reset(c: git.Commit):
+def pull():
+    typer.echo("🔽 Pull START")
+    origin.pull(autostash=True)
+    typer.echo("🔽 Pull END")
+
+
+def push():
+    typer.echo("🔼 Push START")
+    origin.push(my.name)
+    typer.echo("🔼 Push END")
+
+
+def reset_(c: git.Commit):
     typer.echo("🪓 Reset START")
     repo.git.reset(c)
     typer.echo("🪓 Reset END")
@@ -74,7 +86,7 @@ def _reset(c: git.Commit):
 @app.command()
 def reset():
     base = find_base()
-    _reset(base)
+    reset_(base)
 
 
 @app.command()
@@ -84,20 +96,20 @@ def force_push():
         origin.push(my.name, force_with_lease=True)
     except git.GitCommandError:
         if (
-            typer.confirm("⚠️ Someone Push into your-origin, OVERWRITE his code?")
-            and typer.confirm("⚠️ His code may be usefull, continue?")
-            and typer.confirm("⚠️ Are you sure?")
+            typer.confirm("🚨 Someone Push into your-origin, OVERWRITE his code?")
+            and typer.confirm("🚨 His code may be usefull, continue?")
+            and typer.confirm("🚨 Are you sure?")
         ):
             # origin.push(my.name, force=True)
-            typer.echo("⚠️ Input this in termial: git push --force")
+            typer.echo("🚨 Input this in termial: git push --force")
         else:
             typer.echo("⏫ Push STOP")
     typer.echo("⏫ Force Push END")
 
 
-def _squash(base: git.Commit, msg: str, *, need_push: bool):
+def squash_(base: git.Commit, msg: str, *, need_push: bool):
     typer.echo("🧹 Squash START")
-    _reset(base)
+    reset_(base)
     commit(msg)
     if need_push:
         force_push()
@@ -107,7 +119,7 @@ def _squash(base: git.Commit, msg: str, *, need_push: bool):
 @app.command()
 def squash(msg: str = "squash"):
     base = find_base()
-    _squash(base, msg=msg, need_push=True)
+    squash_(base, msg=msg, need_push=True)
 
 
 def try_rebase(autostash: bool):
@@ -115,7 +127,7 @@ def try_rebase(autostash: bool):
         repo.git.rebase(master.commit, autostash=autostash)
     except git.GitCommandError:
         return False
-    force_push()
+    # force_push()
     return True
 
 
@@ -124,7 +136,7 @@ def try_pull_rebase(autostash: bool):
         origin.pull(rebase=True, autostash=autostash)
     except git.GitCommandError:
         return False
-    force_push()
+    # force_push()
     return True
 
 
@@ -134,27 +146,29 @@ def abort():
     repo.git.rebase(abort=True)
 
 
-def resolve_conflict_maually(rebase_func: Callable[[bool], bool], base: git.Commit):
-    _squash(base, "rebase", need_push=False)
+def squash_conflict(rebase_func: Callable[[bool], bool], base: git.Commit):
+    squash_(base, "rebase", need_push=False)
     if not rebase_func(False):
         typer.echo("💥 Please resolve Conflict manually, then Sync")
-        raise
+        return False
+    return True
 
 
 def resolve_conflict(func: Callable[[bool], bool], base: git.Commit):
     if not func(True):
-        typer.echo("⚠️ Found Conflict")
+        typer.echo("🚨 Found Conflict")
         abort()
-        if typer.confirm("⚠️ Squash and try again?"):
-            resolve_conflict_maually(func, base)
-        else:
-            typer.echo("⚠️ STOP")
+        if typer.confirm("🚨 Squash and try again?"):
+            return squash_conflict(func, base)
+        typer.echo("🚨 STOP")
+        return False
+    return True
 
 
 def fetch():
-    typer.echo("☁️ Fetch START")
+    typer.echo("🌐 Fetch START")
     origin.fetch(prune=True, tags=True, prune_tags=True)
-    typer.echo("☁️ Fetch End")
+    typer.echo("🌐 Fetch End")
 
 
 @app.command()
@@ -168,8 +182,11 @@ def rebase():
         return
 
     typer.echo("🌳 Rebase START")
-    resolve_conflict(try_rebase, base)
+    rc = resolve_conflict(try_rebase, base)
     typer.echo("🌳 Rebase END")
+
+    if rc:
+        force_push()
 
 
 @app.command()
@@ -180,8 +197,10 @@ def sync():
 
     if my.name not in origin.refs:
         typer.echo("🌳 Rebase START")
-        resolve_conflict_maually(try_rebase, find_base())
+        rc = squash_conflict(try_rebase, find_base())
         typer.echo("🌳 Rebase END")
+        if rc:
+            push()
     else:
         my_origin = origin.refs[my.name]
 
@@ -191,17 +210,40 @@ def sync():
 
             if my_ahead > 0 and my_origin_ahead == 0:
                 typer.echo("🔄️ Sync: Push your commits")
-                origin.push(my.name)
+                push()
             elif my_ahead == 0 and my_origin_ahead > 0:
                 typer.echo("🔄️ Sync: Pull your-origin commits")
-                origin.pull(autostash=True)
+                pull()
             else:
-                typer.echo("⚠️ Found fork")
-                if typer.confirm("⚠️ Sync: Do you want your-origin code?"):
+                typer.echo("🚨 Found fork")
+                if typer.confirm("🚨 Sync: Do you want your-origin code?"):
                     resolve_conflict(try_pull_rebase, find_base(my, my_origin))
-                else:
+                elif typer.confirm("🚨 Sync: Do you want to Force-Push your code?"):
                     force_push()
+                else:
+                    typer.echo("🔄️ Sync STOP")
     typer.echo("🔄️ Sync END")
+
+
+@app.command()
+def stash():
+    typer.echo("🗄️ Stash START")
+    stash_cnt = len(repo.git.stash("list"))
+    assert stash_cnt > 1
+    if stash_cnt:
+        if typer.confirm("🗄️ Do you want to Pop?"):
+            repo.git.stash("pop")
+        elif typer.confirm("🚨 Do you want to Drop"):
+            # repo.git.stash("drop")
+            typer.echo("🚨 Input this in your termial: git stash drop")
+    elif repo.is_dirty():
+        if typer.confirm("🗄️ Do you want to Stash?"):
+            repo.git.stash()
+        else:
+            typer.echo("🗄️ Stash STOP")
+    else:
+        typer.echo("🗄️ Stash STOP")
+    typer.echo("🗄️ Stash STOP")
 
 
 if __name__ == "__main__":
