@@ -1,5 +1,6 @@
 # noqa: INP001
 from collections.abc import Callable
+from typing import cast
 
 import git
 import typer
@@ -227,23 +228,32 @@ def sync():
 
 @app.command()
 def stash():
-    typer.echo("🗄️ Stash START")
-    stash_cnt = len(repo.git.stash("list"))
-    assert stash_cnt > 1
-    if stash_cnt:
-        if typer.confirm("🗄️ Do you want to Pop?"):
-            repo.git.stash("pop")
-        elif typer.confirm("🚨 Do you want to Drop"):
-            # repo.git.stash("drop")
-            typer.echo("🚨 Input this in your termial: git stash drop")
-    elif repo.is_dirty():
-        if typer.confirm("🗄️ Do you want to Stash?"):
-            repo.git.stash()
-        else:
-            typer.echo("🗄️ Stash STOP")
-    else:
-        typer.echo("🗄️ Stash STOP")
-    typer.echo("🗄️ Stash STOP")
+    typer.echo("📁 Stash START")
+
+    stash_cnt = len(cast("str", repo.git.stash("list")).splitlines())
+    assert stash_cnt < 2
+
+    match repo.is_dirty(untracked_files=True), bool(stash_cnt):
+        case True, True:
+            if typer.confirm("🚨 Do you want to Drop"):
+                # repo.git.stash("drop")
+                typer.echo("🚨 Input this in your termial: git stash drop")
+            else:
+                typer.echo("📁 Stash STOP")
+        case True, False:
+            if typer.confirm("📁 Do you want to Stash?"):
+                repo.git.stash("push")
+            else:
+                typer.echo("📁 Stash STOP")
+        case False, True:
+            if typer.confirm("📁 Do you want to Pop?"):
+                repo.git.stash("pop")
+            else:
+                typer.echo("📁 Stash STOP")
+        case _:
+            raise TypeError
+
+    typer.echo("📁 Stash END")
 
 
 if __name__ == "__main__":
