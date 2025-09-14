@@ -174,9 +174,9 @@ def resolve_conflict(func: Callable[[bool], bool], base: git.Commit):
 
 
 def fetch():
-    typer.echo("🌐 Fetch START")
+    typer.echo("🔃 Fetch START")
     origin.fetch(prune=True, tags=True, prune_tags=True)
-    typer.echo("🌐 Fetch End")
+    typer.echo("🔃 Fetch End")
 
 
 @app.command()
