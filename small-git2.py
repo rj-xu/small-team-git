@@ -110,18 +110,18 @@ def squash(msg: str = "squash"):
     _squash(base, msg=msg, need_push=True)
 
 
-def try_rebase():
+def try_rebase(autostash: bool):
     try:
-        repo.git.rebase(master.commit, autostash=True)
+        repo.git.rebase(master.commit, autostash=autostash)
     except git.GitCommandError:
         return False
     force_push()
     return True
 
 
-def try_pull_rebase():
+def try_pull_rebase(autostash: bool):
     try:
-        origin.pull(rebase=True, autostash=True)
+        origin.pull(rebase=True, autostash=autostash)
     except git.GitCommandError:
         return False
     force_push()
@@ -134,15 +134,15 @@ def abort():
     repo.git.rebase(abort=True)
 
 
-def resolve_conflict_maually(func: Callable[[], bool], base: git.Commit):
+def resolve_conflict_maually(rebase_func: Callable[[bool], bool], base: git.Commit):
     _squash(base, "rebase", need_push=False)
-    if not func():
+    if not rebase_func(False):
         typer.echo("💥 Please resolve Conflict manually, then Sync")
         raise
 
 
-def resolve_conflict(func: Callable[[], bool], base: git.Commit):
-    if not func():
+def resolve_conflict(func: Callable[[bool], bool], base: git.Commit):
+    if not func(True):
         typer.echo("⚠️ Found Conflict")
         abort()
         if typer.confirm("⚠️ Squash and try again?"):
@@ -179,7 +179,9 @@ def sync():
     fetch()
 
     if my.name not in origin.refs:
+        typer.echo("🌳 Rebase START")
         resolve_conflict_maually(try_rebase, find_base())
+        typer.echo("🌳 Rebase END")
     else:
         my_origin = origin.refs[my.name]
 
