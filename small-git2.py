@@ -1,6 +1,5 @@
 # noqa: INP001
 from collections.abc import Callable
-from enum import StrEnum
 from typing import cast
 
 import git
