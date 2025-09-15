@@ -79,7 +79,7 @@ def push() -> None:
     typer.echo("🔼 Push END")
 
 
-def _reset(c: git.Commit) -> None:
+def reset_commit(c: git.Commit) -> None:
     typer.echo("🪓 Reset START")
     repo.git.reset(c)
     typer.echo("🪓 Reset END")
@@ -88,7 +88,7 @@ def _reset(c: git.Commit) -> None:
 @app.command()
 def reset() -> None:
     base = find_base()
-    _reset(base)
+    reset_commit(base)
     typer.echo("🚨 You need to ⏫ Force-Push later")
 
 
@@ -106,18 +106,17 @@ def force_push() -> bool:
             and typer.confirm("🚨 Are you sure?")
         ):
             # origin.push(my.name, force=True)
-            typer.echo("🚨 Input this in termial: git push --force")
+            raise RuntimeError("💥 Input this in termial: git push --force")
         else:
             typer.echo("⏫ Force-Push CANCELLED")
-        return False
 
     typer.echo("⏫ Force-Push END")
     return True
 
 
-def _squash(base: git.Commit, msg: str) -> None:
+def squash_commit(base: git.Commit, msg: str) -> None:
     typer.echo("🧹 Squash START")
-    _reset(base)
+    reset_commit(base)
     commit(msg)
     typer.echo("🧹 Squash END")
 
@@ -125,7 +124,7 @@ def _squash(base: git.Commit, msg: str) -> None:
 @app.command()
 def squash(msg: str = "squash") -> None:
     base = find_base()
-    _squash(base, msg=msg)
+    squash_commit(base, msg=msg)
     force_push()
 
 
@@ -135,16 +134,14 @@ def abort() -> None:
     try:
         repo.git.rebase(abort=True)
     except git.GitCommandError:
-        typer.echo("💥 Abort-Rebase FAILED")
-        typer.echo("💥 Please find help")
-        raise
+        raise RuntimeError("💥 Abort-Rebase FAILED, please find help")
 
 
-def _rebase() -> bool:
+def rebase_commit(c: git.Commit) -> bool:
     typer.echo("🌳 Rebase START")
 
     try:
-        repo.git.rebase(master.commit, autostash=True)
+        repo.git.rebase(c, autostash=True)
     except git.GitCommandError:
         typer.echo("🚨 Rebase FAILED")
         abort()
@@ -168,21 +165,20 @@ def pull_rebase() -> bool:
     return True
 
 
-def squash_then_rebase(rebase_func: Callable[[], bool], base: git.Commit) -> bool:
-    _squash(base, "rebase")
-    if not rebase_func():
-        typer.echo("💥 Please resolve Conflict manually, then 🔄️ Sync")
-        raise RuntimeError
+def squash_then_rebase(c: git.Commit, base: git.Commit) -> bool:
+    squash_commit(base, "rebase")
+    if not rebase_commit(c):
+        raise RuntimeError("💥 Please resolve Conflict manually, then 🔄️ Sync")
 
     typer.echo("🌳 Rebase END")
     return True
 
 
-def try_rebase(rebase_func: Callable[[], bool], base: git.Commit) -> bool:
-    if not rebase_func():
+def try_rebase(c: git.Commit, base: git.Commit) -> bool:
+    if not rebase_commit(c):
         typer.echo("🚨 Found Conflict")
         if typer.confirm("🚨 Squash and try again?"):
-            return squash_then_rebase(rebase_func, base)
+            return squash_then_rebase(c, base)
         typer.echo("🌳 Rebase CANCELLED")
         return False
 
@@ -207,7 +203,7 @@ def sync() -> bool:
         typer.echo("🚨 You are not up to date with master, please 🌳 Rebase later")
 
     if my.name not in origin.refs:
-        if (base == master.commit) or (base == my.commit and _rebase()) or squash_then_rebase(_rebase, base):
+        if (base == master.commit) or (base == my.commit and rebase_commit(base)) or squash_then_rebase(base, base):
             push()
         else:
             typer.echo("💥 Unreachable")
@@ -233,7 +229,7 @@ def sync() -> bool:
             if base.committed_datetime > my_origin_base.committed_datetime:
                 force_push()
             elif typer.confirm("🚨 Keep your-origin code?"):
-                try_rebase(pull_rebase, find_base(my, my_origin))
+                try_rebase(my_origin.commit, find_base(my, my_origin))
             elif typer.confirm("🚨 Keep your code?"):
                 force_push()
             else:
@@ -258,7 +254,7 @@ def rebase() -> None:
     if base == master.commit:
         typer.echo("✅ Already up to date with master")
         return
-    rc = try_rebase(_rebase, base)
+    rc = try_rebase(rebase_master, base)
     if rc:
         force_push()
 
@@ -274,7 +270,7 @@ def stash() -> None:
         case True, True:
             if typer.confirm("🚨 Do you want to Drop"):
                 # repo.git.stash("drop")
-                typer.echo("🚨 Input this in your termial: git stash drop")
+                raise RuntimeError("💥 Input this in your termial: git stash drop")
             else:
                 typer.echo("📁 Stash CANCELLED")
         case True, False:
