@@ -230,6 +230,7 @@ def sync() -> bool:
                 force_push()
             elif typer.confirm("🚨 Keep your-origin code?"):
                 try_rebase(my_origin.commit, find_base(my, my_origin))
+                push()
             elif typer.confirm("🚨 Keep your code?"):
                 force_push()
             else:
