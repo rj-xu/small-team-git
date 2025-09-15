@@ -1,6 +1,6 @@
 # noqa: INP001
-import os
-from typing import Annotated
+from collections.abc import Callable
+from typing import cast
 
 import git
 import typer
@@ -12,16 +12,6 @@ repo = git.Repo(".")
 assert repo.index.unmerged_blobs() == {}
 # assert repo.git.stash("list") == ""
 
-
-config_reader = repo.config_reader()
-temp = config_reader.get_value("user", "name", default=None)
-assert isinstance(temp, str)
-user = temp
-
-temp = config_reader.get_value("user", "email", default=None)
-assert isinstance(temp, str)
-email = temp
-
 assert "origin" in repo.remotes
 origin = repo.remotes["origin"]
 
@@ -30,37 +20,33 @@ if "master" in origin.refs:
 elif "main" in origin.refs:
     master = origin.refs["main"]
 else:
-    raise ValueError("No master or main branch found")
+    raise ValueError
 
 my = repo.active_branch
 assert my.name not in ("master", "main")
 
+# config_reader = repo.config_reader()
+# temp = config_reader.get_value("user", "name", default=None)
+# assert isinstance(temp, str)
+# user = temp
 
-def find_base(b: git.Head = my):
-    bases = repo.merge_base(b, master)
+# temp = config_reader.get_value("user", "email", default=None)
+# assert isinstance(temp, str)
+# email = temp
+
+
+def find_base(b0: git.Head = my, b1: git.Head = master):
+    bases = repo.merge_base(b0, b1)
     assert len(bases) == 1
     return bases[0]
 
 
-base: git.Commit = find_base()
+def has_conflict(c0: git.Commit, c1: git.Commit) -> bool:
+    return repo.git.merge_tree(c0.name, c1.name, quiet=True) != 0
 
 
-def find_latest_mr():
-    return master.commit
-
-
-def find_my_mr():
-    base_time = base.committed_datetime
-    for commit in repo.iter_commits(master):
-        if commit.committed_datetime <= base_time:
-            break
-        if commit.author.email and email in commit.author.email:
-            return commit
-    return None
-
-
-def is_conflict(b0: git.Head = my, b1: git.Head = master):
-    return repo.git.merge_tree(b0.name, b1.name, quiet=True) != 0
+def count_commits(c0: git.Commit, c1: git.Commit):
+    return len(list(repo.iter_commits(f"{c0}..{c1}")))
 
 
 def commit_info(c: git.Commit):
@@ -68,238 +54,285 @@ def commit_info(c: git.Commit):
 
 
 @app.command()
-def fetch():
-    typer.echo("☁️ Fetch START")
-    origin.fetch(prune=True, tags=True, prune_tags=True)
-    typer.echo("☁️ Fetch End")
+def commit(msg: str = "update") -> None:
+    if not repo.is_dirty(untracked_files=True):
+        typer.echo("💾 Commit: there is no changes")
+        return
 
-
-@app.command()
-def commit(msg: str = "update"):
     typer.echo("💾 Commit START")
     typer.echo(f"💾 Commit Message: {msg}")
-    repo.git.add(A=True)
+    if not repo.index.diff("HEAD"):
+        repo.git.add(A=True)
     repo.index.commit(msg)
     typer.echo("💾 Commit END")
 
 
-@app.command()
-def pull():
-    typer.echo(f"⏬ Pull START")
-    origin.pull(rebase=True, autostash=True)
-    typer.echo(f"⏬ Pull End")
+def pull() -> None:
+    typer.echo("🔽 Pull START")
+    try:
+        origin.pull(autostash=True)
+    except git.GitCommandError:
+        typer.echo("🚨 Pull FAILED")
+        raise
+    typer.echo("🔽 Pull END")
+
+
+def push() -> None:
+    typer.echo("🔼 Push START")
+    try:
+        origin.push(my.name)
+    except git.GitCommandError:
+        typer.echo("🚨 Push FAILED")
+        raise
+    typer.echo("🔼 Push END")
+
+
+def _reset(c: git.Commit) -> None:
+    typer.echo("🪓 Reset START")
+    repo.git.reset(c)
+    typer.echo("🪓 Reset END")
 
 
 @app.command()
-def force_push(force_with_lease: bool = True, force: bool = False):
-    match force_with_lease, force:
-        case True, False:
-            s = "-Force-With-Lease"
-        case False, True:
-            s = "-Force"
-        case False, False:
-            s = ""
-        case _:
-            raise ValueError
-
-    typer.echo(f"⏫ Push{s} START")
-    origin.push(my.name, force_with_lease=force_with_lease)
-    typer.echo(f"⏫ Push{s} End")
+def reset() -> None:
+    base = find_base()
+    _reset(base)
+    typer.echo("🚨 You need to ⏫ Force-Push later")
 
 
 @app.command()
-def sync():
-    typer.echo("🔄️ Sync START")
+def force_push() -> bool:
+    typer.echo("⏫ Force-Push START")
 
-    fetch()
+    try:
+        origin.push(my.name, force_with_lease=True)
+    except git.GitCommandError:
+        typer.echo("🚨 Force-Push FAILED")
+        if (
+            typer.confirm("🚨 Someone commited into your-origin, OVERWRITE his code?")
+            and typer.confirm("🚨 His code may be usefull, continue?")
+            and typer.confirm("🚨 Are you sure?")
+        ):
+            # origin.push(my.name, force=True)
+            typer.echo("🚨 Input this in termial: git push --force")
+            raise
+        else:
+            typer.echo("⏫ Force-Push CANCELLED")
+            return False
 
-    if my.name not in origin.refs:
-        typer.echo("🔄️ Sync: Publish your branch")
-        force_push(False, False)
-    else:
-        my_origin = origin.refs[my.name]
-
-        if my_origin.commit != my.commit:
-            my_ahead = len(list(repo.iter_commits(f"{my_origin.commit}..{my.commit}")))
-            my_origin_ahead = len(list(repo.iter_commits(f"{my.commit}..{my_origin.commit}")))
-
-            if my_ahead > 0 and my_origin_ahead == 0:
-                typer.echo("🔄️ Sync: Push your commits")
-                force_push(False, False)
-            elif my_ahead == 0 and my_origin_ahead > 0:
-                typer.echo("🔄️ Sync: Pull your-origin commits")
-                origin.pull(rebase=True, autostash=True)
-            else:
-                typer.echo("🔄️ Sync: Found Fork")
-                try:
-                    force_push(False, False)
-                except git.GitCommandError as e:
-                    typer.echo(f"⚠️ Sync: Failed to Force-Push: {e}")
-
-                    if typer.confirm("⚠️ Sync: Maybe someone push into your-origin branch, OVERWRITE his code?"):
-                        force_push(force=True)
-                    elif typer.confirm("⚠️ Sync: OVERWRITE your code?"):
-                        pull()
-                        force_push(False, False)
-                    else:
-                        typer.echo("🔄️ Sync STOP")
-
-    typer.echo("🔄️ Sync END")
+    typer.echo("⏫ Force-Push END")
+    return True
 
 
-@app.command()
-def squash(push: bool = True):
+def _squash(base: git.Commit, msg: str) -> None:
     typer.echo("🧹 Squash START")
-    repo.git.reset(base)
-    if push:
-        force_push()
+    _reset(base)
+    commit(msg)
     typer.echo("🧹 Squash END")
 
 
 @app.command()
-def reset(push: bool = True):
-    global base
-
-    fetch()
-
-    my_mr = find_my_mr()
-    if my_mr:
-        typer.echo("🪓 Reset START")
-        typer.echo(f"🪓 Reset: {commit_info(my_mr)}")
-        if typer.confirm("🪓 Reset: Is this your latest Merge-Request?"):
-            repo.git.reset(my_mr)
-            base = my_mr
-            if push:
-                force_push()
-        else:
-            typer.echo("🪓 Reset STOP")
-        typer.echo("🪓 Reset END")
-
-
-@app.command()
-def rebase():
-    fetch()
-
+def squash(msg: str = "squash") -> None:
     base = find_base()
-
-    if master.commit == base:
-        return
-
-    try:
-        typer.echo("🌳 Rebase START")
-        repo.git.rebase(master.commit, autostash=True)
-    except git.GitCommandError:
-        repo.git.rebase(abort=True)
-        repo.git.reset(base)
-        repo.git.rebase(master.commit, autostash=True)
-
-
-
-    master_mr = find_latest_mr()
-    if master_mr.committed_datetime > base.committed_datetime:
-        typer.echo("🌳 Rebase START")
-        if is_conflict():
-            # if typer.echo("💥 Conflict: Suggest you to Squash to ?")
-            if not typer.confirm("💥 Conflict: You need to resolve manually, then force-push, continue?"):
-                typer.echo("🛑 Abort START")
-                repo.git.rebase(abort=True)
-                typer.echo("🛑 Abort END")
-                return
-
-            repo.git.reset(base)
-        typer.echo("🌳 Rebase: Latest Master Merge-Request is {master_mr}")
-        repo.git.rebase(master_mr, autostash=True)
-
-        typer.echo("🌳 Rebase END")
+    _squash(base, msg=msg)
     force_push()
 
 
 @app.command()
-def abort():
-    typer.echo("🛑 Abort START")
-    repo.git.rebase(abort=True)
-    typer.echo("🛑 Abort END")
+def abort() -> None:
+    typer.echo("🛑 Abort-Rebase")
+    try:
+        repo.git.rebase(abort=True)
+    except git.GitCommandError:
+        typer.echo("💥 Abort-Rebase FAILED")
+        typer.echo("💥 Please find help")
+        raise
 
 
-# @app.command()
-# def auto():
-#     typer.echo("🤖 Auto Small-Git...")
-#     sync()
-#     need_push = False
-#     need_push |= reset(False)
-#     need_push |= rebase(False)
-#     if need_push:
-#         force_push()
-#     submod()
-#     os.system("uv sync")
-#     typer.echo("✅ DONE")
+def _rebase() -> bool:
+    typer.echo("🌳 Rebase START")
+
+    try:
+        repo.git.rebase(master.commit, autostash=True)
+    except git.GitCommandError:
+        typer.echo("🚨 Rebase FAILED")
+        abort()
+        return False
+
+    typer.echo("🌳 Rebase END")
+    return True
 
 
-def iter_commits(c1: git.Commit, c0: git.Commit):
-    return repo.iter_commits(f"{c0}..{c1}")
+def pull_rebase() -> bool:
+    typer.echo("🌳 Pull-Rebase START")
+
+    try:
+        origin.pull(rebase=True, autostash=True)
+    except git.GitCommandError:
+        typer.echo("🚨 Pull-Rebase FAILED")
+        abort()
+        return False
+
+    typer.echo("🌳 Pull-Rebase END")
+    return True
 
 
-def has_conflict(c0: git.Commit, c1: git.Commit) -> bool:
-    return repo.git.merge_tree(c0.name, c1.name, quiet=True) != 0
+def squash_then_rebase(rebase_func: Callable[[], bool], base: git.Commit) -> bool:
+    _squash(base, "rebase")
+    if not rebase_func():
+        typer.echo("💥 Please resolve Conflict manually, then 🔄️ Sync")
+        raise RuntimeError
+
+    typer.echo("🌳 Rebase END")
+    return True
+
+
+def try_rebase(rebase_func: Callable[[], bool], base: git.Commit) -> bool:
+    if not rebase_func():
+        typer.echo("🚨 Found Conflict")
+        if typer.confirm("🚨 Squash and try again?"):
+            return squash_then_rebase(rebase_func, base)
+        typer.echo("🌳 Rebase CANCELLED")
+        return False
+
+    typer.echo("🌳 Rebase END")
+    return True
+
+
+def fetch() -> None:
+    typer.echo("🔃 Fetch START")
+    origin.fetch(prune=True, tags=True, prune_tags=True)
+    typer.echo("🔃 Fetch End")
 
 
 @app.command()
-def auto():
-    assert repo.is_dirty()
+def sync() -> bool:
+    typer.echo("🔄️ Sync START")
 
     fetch()
 
     base = find_base()
-    master_mr = find_latest_mr()
+    if base != master.commit:
+        typer.echo("🚨 You are not up to date with master, please 🌳 Rebase later")
 
-    if master_mr == base:
+    if my.name not in origin.refs:
+        if (base == master.commit) or (base == my.commit and _rebase()) or squash_then_rebase(_rebase, base):
+            push()
+        else:
+            typer.echo("💥 Unreachable")
+            raise RuntimeError
+    else:
+        my_origin = origin.refs[my.name]
+
+        my_ahead = len(list(repo.iter_commits(f"{my_origin.commit}..{my.commit}")))
+        my_origin_ahead = len(list(repo.iter_commits(f"{my.commit}..{my_origin.commit}")))
+
+        if my_ahead > 0 and my_origin_ahead == 0:
+            typer.echo("🔄️ Sync: Push your commits")
+            push()
+        elif my_ahead == 0 and my_origin_ahead > 0:
+            typer.echo("🔄️ Sync: Pull your-origin commits")
+            pull()
+        elif my_ahead > 0 and my_origin_ahead > 0:
+            typer.echo("🚨 Found Fork")
+            my_origin_base = find_base(my_origin, master)
+
+            # NOTE: never rebase others banch or commit when other is rebasing
+
+            if base.committed_datetime > my_origin_base.committed_datetime:
+                force_push()
+            elif typer.confirm("🚨 Keep your-origin code?"):
+                try_rebase(pull_rebase, find_base(my, my_origin))
+            elif typer.confirm("🚨 Keep your code?"):
+                force_push()
+            else:
+                typer.echo("🔄️ Sync CANCELLED")
+                return False
+        else:
+            typer.echo("🔄️ Sync: your-orgin is up to date with your-local")
+
+    typer.echo("🔄️ Sync END")
+    return True
+
+
+@app.command()
+def rebase() -> None:
+    # origin.pull(master.name, rebase=True, autostash=True)
+
+    if not sync():
+        typer.echo("🌳 Rebase CANCELLED")
         return
 
-    found_new_base = False
-    found_conflict = False
-    need_use_onto = False
-
-    for my_i in iter_commits(my.commit, base):
-        for master_i in iter_commits(master.commit, base):
-            if not has_conflict(my_i, master_i):
-                found_new_base = True
-                found_conflict = master_i != master.commit
-                need_use_onto = my_i != my.commit
-
-    if found_new_base:
-        reset()
-
-
+    base = find_base()
+    if base == master.commit:
+        typer.echo("✅ Already up to date with master")
+        return
+    rc = try_rebase(_rebase, base)
+    if rc:
+        force_push()
 
 
 @app.command()
-def stash():
-    typer.echo("🗄️ Stash START")
-    if repo.git.stash("list"):
-        if typer.confirm("🗄️ Do you want to pop the stash?"):
-            repo.git.stash("pop")
-        else:
-            typer.echo("🗄️ Stash STOP")
-    elif repo.is_dirty():
-        if typer.confirm("🗄️ Do you want to stash the changes?"):
-            repo.git.stash()
-        else:
-            typer.echo("🗄️ Stash STOP")
-    else:
-        typer.echo("🗄️ Stash STOP")
-    typer.echo("🗄️ Stash STOP")
+def stash() -> None:
+    typer.echo("📁 Stash START")
+
+    stash_cnt = len(cast("str", repo.git.stash("list")).splitlines())
+    assert stash_cnt < 2
+
+    match repo.is_dirty(untracked_files=True), bool(stash_cnt):
+        case True, True:
+            if typer.confirm("🚨 Do you want to Drop"):
+                # repo.git.stash("drop")
+                typer.echo("🚨 Input this in your termial: git stash drop")
+            else:
+                typer.echo("📁 Stash CANCELLED")
+        case True, False:
+            if typer.confirm("📁 Do you want to Stash?"):
+                repo.git.stash("push")
+            else:
+                typer.echo("📁 Stash CANCELLED")
+        case False, True:
+            if typer.confirm("📁 Do you want to Pop?"):
+                repo.git.stash("pop")
+            else:
+                typer.echo("📁 Stash CANCELLED")
+        case _:
+            raise TypeError
+
+    typer.echo("📁 Stash END")
 
 
 @app.command()
-def submod(
-    remote: Annotated[bool, typer.Option(prompt="🤖 update to remote latest (NOT follow repo)")] = False,
-):
-    typer.echo("📦 Submodule START")
+def submod(use_latest: bool = False) -> None:
+    typer.echo("📦 Submodule-Update START")
     args = ["update", "--init", "--recursive", "--force"]
-    if remote:
+    if use_latest:
         args.append("--remote")
     repo.git.submodule(args)
-    typer.echo("📦 Submodule END")
+    typer.echo("📦 Submodule-Update END")
+
+
+@app.command()
+def zen() -> None:
+    z = [
+        "Always keep the tree structure, linear history",
+        "A commit doesn't matter, the total amount of commits matters",
+        "Only three branches, yours, your origin, master",
+        "Be responsible for your own branch",
+        r"         ",
+        r"    |    ",
+        r"    ●    ",
+        r" |  |    ",
+        r" ●  ●    ",
+        r"  \ |  | ",
+        r"    ●  ● ",
+        r"    | /  ",
+        r"    ●    ",
+        r"    |    ",
+        r"         ",
+    ]
+    for line in z:
+        typer.echo(line)
 
 
 if __name__ == "__main__":
