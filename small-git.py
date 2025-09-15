@@ -69,21 +69,13 @@ def commit(msg: str = "update") -> None:
 
 def pull() -> None:
     typer.echo("🔽 Pull START")
-    try:
-        origin.pull(autostash=True)
-    except git.GitCommandError:
-        typer.echo("🚨 Pull FAILED")
-        raise
+    origin.pull(autostash=True)
     typer.echo("🔽 Pull END")
 
 
 def push() -> None:
     typer.echo("🔼 Push START")
-    try:
-        origin.push(my.name)
-    except git.GitCommandError:
-        typer.echo("🚨 Push FAILED")
-        raise
+    origin.push(my.name)
     typer.echo("🔼 Push END")
 
 
@@ -115,10 +107,9 @@ def force_push() -> bool:
         ):
             # origin.push(my.name, force=True)
             typer.echo("🚨 Input this in termial: git push --force")
-            raise
         else:
             typer.echo("⏫ Force-Push CANCELLED")
-            return False
+        return False
 
     typer.echo("⏫ Force-Push END")
     return True
