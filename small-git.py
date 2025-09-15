@@ -254,7 +254,7 @@ def rebase() -> None:
     if base == master.commit:
         typer.echo("✅ Already up to date with master")
         return
-    rc = try_rebase(rebase_master, base)
+    rc = try_rebase(master.commit, base)
     if rc:
         force_push()
 
