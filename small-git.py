@@ -1,5 +1,5 @@
 # noqa: INP001
-from collections.abc import Callable
+from pathlib import Path
 from typing import cast
 
 import git
@@ -41,16 +41,16 @@ def find_base(b0: git.Head = my, b1: git.Head = master):
     return bases[0]
 
 
-def has_conflict(c0: git.Commit, c1: git.Commit) -> bool:
-    return repo.git.merge_tree(c0.name, c1.name, quiet=True) != 0
+# def has_conflict(c0: git.Commit, c1: git.Commit) -> bool:
+#     return repo.git.merge_tree(c0.name, c1.name, quiet=True) != 0
 
 
-def count_commits(c0: git.Commit, c1: git.Commit):
-    return len(list(repo.iter_commits(f"{c0}..{c1}")))
+# def count_commits(c0: git.Commit, c1: git.Commit):
+#     return len(list(repo.iter_commits(f"{c0}..{c1}")))
 
 
-def commit_info(c: git.Commit):
-    return f"[ {c.message} ][ {c.author} ][ {c.authored_datetime} ][ {c.hexsha[:8]} ]"
+# def commit_info(c: git.Commit):
+#     return f"[ {c.message} ][ {c.author} ][ {c.authored_datetime} ][ {c.hexsha[:8]} ]"
 
 
 @app.command()
@@ -89,7 +89,7 @@ def reset_commit(c: git.Commit) -> None:
 def reset() -> None:
     base = find_base()
     reset_commit(base)
-    typer.echo("🚨 You need to ⏫ Force-Push later")
+    typer.echo("🚨 You need to 💾 Commit and ⏫ Force-Push later")
 
 
 @app.command()
@@ -98,7 +98,7 @@ def force_push() -> bool:
 
     try:
         origin.push(my.name, force_with_lease=True)
-    except git.GitCommandError:
+    except git.GitCommandError as e:
         typer.echo("🚨 Force-Push FAILED")
         if (
             typer.confirm("🚨 Someone commited into your-origin, OVERWRITE his code?")
@@ -106,35 +106,41 @@ def force_push() -> bool:
             and typer.confirm("🚨 Are you sure?")
         ):
             # origin.push(my.name, force=True)
-            raise RuntimeError("💥 Input this in termial: git push --force")
-        else:
-            typer.echo("⏫ Force-Push CANCELLED")
+            raise RuntimeError("💥 Input this in termial: git push --force") from e
+        typer.echo("⏫ Force-Push CANCELLED")
 
     typer.echo("⏫ Force-Push END")
     return True
 
 
-def squash_commit(base: git.Commit, msg: str) -> None:
+@app.command()
+def squash(msg: str = "squash") -> None:
+    base = find_base()
     typer.echo("🧹 Squash START")
     reset_commit(base)
     commit(msg)
     typer.echo("🧹 Squash END")
-
-
-@app.command()
-def squash(msg: str = "squash") -> None:
-    base = find_base()
-    squash_commit(base, msg=msg)
     force_push()
 
 
 @app.command()
 def abort() -> None:
     typer.echo("🛑 Abort-Rebase")
+
+    rebase_merge_dir = Path(repo.git_dir) / "rebase-merge"
+    rebase_apply_dir = Path(repo.git_dir) / "rebase-apply"
+
+    in_rebase = rebase_merge_dir.exists() or rebase_apply_dir.exists()
+
+    if not in_rebase:
+        typer.echo("🛑 Not in a rebase state, nothing to abort")
+        return
+
     try:
         repo.git.rebase(abort=True)
-    except git.GitCommandError:
-        raise RuntimeError("💥 Abort-Rebase FAILED, please find help")
+        typer.echo("✅ Rebase aborted successfully")
+    except git.GitCommandError as e:
+        raise RuntimeError("💥 Abort-Rebase FAILED, please find help") from e
 
 
 def rebase_commit(c: git.Commit) -> bool:
@@ -165,8 +171,8 @@ def pull_rebase() -> bool:
     return True
 
 
-def squash_then_rebase(c: git.Commit, base: git.Commit) -> bool:
-    squash_commit(base, "rebase")
+def reset_then_rebase(c: git.Commit, base: git.Commit) -> bool:
+    reset_commit(base)
     if not rebase_commit(c):
         raise RuntimeError("💥 Please resolve Conflict manually, then 🔄️ Sync")
 
@@ -178,7 +184,7 @@ def try_rebase(c: git.Commit, base: git.Commit) -> bool:
     if not rebase_commit(c):
         typer.echo("🚨 Found Conflict")
         if typer.confirm("🚨 Squash and try again?"):
-            return squash_then_rebase(c, base)
+            return reset_then_rebase(c, base)
         typer.echo("🌳 Rebase CANCELLED")
         return False
 
@@ -199,16 +205,21 @@ def sync() -> bool:
     fetch()
 
     base = find_base()
-    if base != master.commit:
-        typer.echo("🚨 You are not up to date with master, please 🌳 Rebase later")
 
     if my.name not in origin.refs:
-        if (base == master.commit) or (base == my.commit and rebase_commit(base)) or squash_then_rebase(base, base):
+        if (
+            (base == master.commit)
+            or (base == my.commit and rebase_commit(base))
+            or reset_then_rebase(master.commit, base)
+        ):
             push()
         else:
             typer.echo("💥 Unreachable")
             raise RuntimeError
     else:
+        if base != master.commit:
+            typer.echo("🚨 You are not up to date with master, please 🌳 Rebase later")
+
         my_origin = origin.refs[my.name]
 
         my_ahead = len(list(repo.iter_commits(f"{my_origin.commit}..{my.commit}")))
@@ -291,7 +302,7 @@ def stash() -> None:
 
 
 @app.command()
-def submod(use_latest: bool = False) -> None:
+def submod(*, use_latest: bool = False) -> None:
     typer.echo("📦 Submodule-Update START")
     args = ["update", "--init", "--recursive", "--force"]
     if use_latest:
