@@ -71,7 +71,7 @@ class Cmd(StrEnum):
     FETCH      = "🔃 Fetch"
     SYNC       = "🔄️ Sync"
     STASH      = "📁 Stash"
-    SUBMOD     = "📦 Submod"
+    SUBMOD     = "📦 Submodule-Update"
     # fmt: on
 
     def start(self):
@@ -205,6 +205,7 @@ def abort() -> None:
 
     if not in_rebase:
         cmd.info("There is nothing to abort")
+        cmd.cancel()
         return
 
     try:
@@ -224,7 +225,6 @@ def rebase_commit(c: git.Commit) -> bool:
         repo.git.rebase(c, autostash=True)
     except git.GitCommandError as e:
         cmd.fail(e)
-        abort()
         return False
 
     cmd.end()
@@ -243,8 +243,9 @@ def reset_then_rebase(c: git.Commit, base: git.Commit) -> bool:
 def try_rebase(c: git.Commit, base: git.Commit) -> bool:
     cmd = Cmd.REBASE
     if not rebase_commit(c):
+        abort()
         cmd.warn("Found Conflict")
-        if typer.confirm("🚨 Squash and try again?"):
+        if cmd.confirm(f"{Cmd.RESET} and {Cmd.REBASE} again?"):
             return reset_then_rebase(c, base)
         cmd.cancel()
         return False
@@ -268,18 +269,14 @@ def sync() -> bool:
     base = find_base()
 
     if my.name not in origin.refs:
-        if (
-            (base == master.commit)
-            or (base == my.commit and rebase_commit(base))
-            or reset_then_rebase(master.commit, base)
-        ):
+        if base == master.commit or try_rebase(master.commit, base):
             push()
         else:
-            typer.echo("💥 Unreachable")
-            raise RuntimeError
+            cmd.cancel()
+            raise cmd.error("You should choose {Cmd.RESET} and {Cmd.REBASE}")
     else:
         if base != master.commit:
-            typer.echo("🚨 You are not up to date with master, please 🌳 Rebase later")
+            cmd.warn("You are not up to date with master, please 🌳 Rebase later")
 
         my_origin = origin.refs[my.name]
 
@@ -287,89 +284,95 @@ def sync() -> bool:
         my_origin_ahead = count_commits(my.commit, my_origin.commit)
 
         if my_ahead > 0 and my_origin_ahead == 0:
-            typer.echo("🔄️ Sync: Push your commits")
+            cmd.info("Push your commits")
             push()
         elif my_ahead == 0 and my_origin_ahead > 0:
-            typer.echo("🔄️ Sync: Pull your-origin commits")
+            cmd.info("Pull your-origin commits")
             pull()
         elif my_ahead > 0 and my_origin_ahead > 0:
-            typer.echo("🚨 Found Fork")
+            cmd.warn("Found Fork")
             my_origin_base = find_base(my_origin, master)
 
-            # NOTE: never rebase others banch or commit when other is rebasing
-
+            # NOTE: never rebase others banch
             if base.committed_datetime > my_origin_base.committed_datetime:
                 force_push()
-            elif typer.confirm("🚨 Keep your-origin code?"):
+            elif cmd.confirm("Keep your-origin code?"):
                 try_rebase(my_origin.commit, find_base(my, my_origin))
                 push()
-            elif typer.confirm("🚨 Keep your code?"):
+            elif cmd.confirm("Keep your code?"):
                 force_push()
             else:
-                typer.echo("🔄️ Sync CANCELLED")
+                cmd.cancel()
                 return False
         else:
-            typer.echo("🔄️ Sync: your-orgin is up to date with your-local")
+            cmd.info("🔄️ Sync: your-orgin is up to date with your-local")
 
-    typer.echo("🔄️ Sync END")
+    cmd.end()
     return True
 
 
 @app.command()
 def rebase() -> None:
-    # origin.pull(master.name, rebase=True, autostash=True)
-
     if not sync():
-        typer.echo("🌳 Rebase CANCELLED")
         return
+
+    cmd = Cmd.REBASE
+
+    # origin.pull(master.name, rebase=True, autostash=True)
 
     base = find_base()
     if base == master.commit:
-        typer.echo("✅ Already up to date with master")
+        cmd.info("Already up to date with master")
+        cmd.cancel()
         return
-    rc = try_rebase(master.commit, base)
-    if rc:
+
+    if try_rebase(master.commit, base):
         force_push()
 
 
 @app.command()
 def stash() -> None:
-    typer.echo("📁 Stash START")
+    cmd = Cmd.STASH
+    cmd.start()
 
     stash_cnt = len(cast("str", repo.git.stash("list")).splitlines())
     assert stash_cnt < 2
 
     match repo.is_dirty(untracked_files=True), bool(stash_cnt):
         case True, True:
-            if typer.confirm("🚨 Do you want to Drop"):
+            if cmd.confirm("Do you want to Drop"):
                 # repo.git.stash("drop")
-                raise RuntimeError("💥 Input this in your termial: git stash drop")
+                raise cmd.error("Input this in your termial: git stash drop")
             else:
-                typer.echo("📁 Stash CANCELLED")
+                cmd.cancel()
         case True, False:
-            if typer.confirm("📁 Do you want to Stash?"):
+            if cmd.confirm("Do you want to Stash?"):
                 repo.git.stash("push")
             else:
-                typer.echo("📁 Stash CANCELLED")
+                cmd.cancel()
         case False, True:
-            if typer.confirm("📁 Do you want to Pop?"):
+            if cmd.confirm("Do you want to Pop?"):
                 repo.git.stash("pop")
             else:
-                typer.echo("📁 Stash CANCELLED")
+                cmd.cancel()
         case _:
             raise TypeError
 
-    typer.echo("📁 Stash END")
+    cmd.end()
 
 
 @app.command()
-def submod(*, use_latest: bool = False) -> None:
-    typer.echo("📦 Submodule-Update START")
+def submod(*, remote: bool = False) -> None:
+    if not sync():
+        return
+
+    cmd = Cmd.SUBMOD
+    cmd.start()
     args = ["update", "--init", "--recursive", "--force"]
-    if use_latest:
+    if remote:
         args.append("--remote")
     repo.git.submodule(args)
-    typer.echo("📦 Submodule-Update END")
+    cmd.end()
 
 
 @app.command()
