@@ -1,4 +1,5 @@
 # noqa: INP001
+from enum import StrEnum
 from pathlib import Path
 from typing import cast
 
@@ -41,91 +42,161 @@ def find_base(b0: git.Head = my, b1: git.Head = master):
     return bases[0]
 
 
+def is_dirty() -> bool:
+    return repo.is_dirty(untracked_files=True)
+
+
+def count_commits(c0: git.Commit, c1: git.Commit):
+    return len(list(repo.iter_commits(f"{c0}..{c1}")))
+
+
 # def has_conflict(c0: git.Commit, c1: git.Commit) -> bool:
 #     return repo.git.merge_tree(c0.name, c1.name, quiet=True) != 0
-
-
-# def count_commits(c0: git.Commit, c1: git.Commit):
-#     return len(list(repo.iter_commits(f"{c0}..{c1}")))
 
 
 # def commit_info(c: git.Commit):
 #     return f"[ {c.message} ][ {c.author} ][ {c.authored_datetime} ][ {c.hexsha[:8]} ]"
 
 
+class Cmd(StrEnum):
+    # fmt: off
+    COMMIT     = "💾 Commit"
+    PULL       = "🔽 Pull"
+    PUSH       = "🔼 Push"
+    RESET      = "🪓 Reset"
+    FORCE_PUSH = "⏫ Force-Push"
+    SQUASH     = "🧹 Squash"
+    ABORT      = "🛑 Abort"
+    REBASE     = "🌳 Rebase"
+    FETCH      = "🔃 Fetch"
+    SYNC       = "🔄️ Sync"
+    STASH      = "📁 Stash"
+    SUBMOD     = "📦 Submod"
+    # fmt: on
+
+    def start(self):
+        typer.echo(f"{self} START")
+
+    def end(self):
+        typer.secho(f"{self} END", fg=typer.colors.GREEN)
+
+    def cancel(self):
+        typer.secho(f"{self} CANCELLED", fg=typer.colors.YELLOW)
+
+    def fail(self, e: Exception):
+        typer.echo(e)
+        typer.secho(f"{self} FAILED", fg=typer.colors.RED)
+
+    def info(self, msg: str):
+        typer.echo(f"{self} {msg}")
+
+    def warn(self, msg: str):
+        typer.secho(f"🚨 {msg}", bg=typer.colors.YELLOW)
+
+    def error(self, msg: str):
+        return RuntimeError(f"💥 {msg}")
+
+    def confirm(self, msg: str) -> bool:
+        self.warn(msg)
+        return typer.confirm("")
+
+
+@app.command()
+def show():
+    for cmd in Cmd:
+        cmd.start()
+        cmd.info("This is Info")
+        cmd.warn("This is Warn")
+        cmd.cancel()
+        cmd.fail(RuntimeError("This is Fail"))
+        cmd.end()
+        raise cmd.error("This is Error")
+
+
 @app.command()
 def commit(msg: str = "update") -> None:
-    if not repo.is_dirty(untracked_files=True):
-        typer.echo("💾 Commit: there is no changes")
+    cmd = Cmd.COMMIT
+    cmd.start()
+
+    if not is_dirty():
+        cmd.info("There is no change")
+        cmd.cancel()
         return
 
-    typer.echo("💾 Commit START")
-    typer.echo(f"💾 Commit Message: {msg}")
+    cmd.info(f"Message: {msg}")
     if not repo.index.diff("HEAD"):
         repo.git.add(A=True)
     repo.index.commit(msg)
-    typer.echo("💾 Commit END")
+
+    cmd.end()
 
 
 def pull() -> None:
-    typer.echo("🔽 Pull START")
-    origin.pull(autostash=True)
-    typer.echo("🔽 Pull END")
+    cmd = Cmd.PULL
+    cmd.start()
+    origin.pull(rebase=True, autostash=True)
+    cmd.end()
 
 
 def push() -> None:
-    typer.echo("🔼 Push START")
+    cmd = Cmd.PUSH
+    cmd.start()
     origin.push(my.name)
-    typer.echo("🔼 Push END")
+    cmd.end()
 
 
 def reset_commit(c: git.Commit) -> None:
-    typer.echo("🪓 Reset START")
+    cmd = Cmd.RESET
+    cmd.start()
     repo.git.reset(c)
-    typer.echo("🪓 Reset END")
+    cmd.end()
 
 
 @app.command()
 def reset() -> None:
     base = find_base()
     reset_commit(base)
-    typer.echo("🚨 You need to 💾 Commit and ⏫ Force-Push later")
+    Cmd.RESET.warn(f"You need to {Cmd.FORCE_PUSH} later")
 
 
 @app.command()
 def force_push() -> bool:
-    typer.echo("⏫ Force-Push START")
+    cmd = Cmd.FORCE_PUSH
+    cmd.start()
 
     try:
         origin.push(my.name, force_with_lease=True)
     except git.GitCommandError as e:
-        typer.echo("🚨 Force-Push FAILED")
+        cmd.fail(e)
         if (
-            typer.confirm("🚨 Someone commited into your-origin, OVERWRITE his code?")
-            and typer.confirm("🚨 His code may be usefull, continue?")
-            and typer.confirm("🚨 Are you sure?")
+            cmd.confirm("Someone commited into your-origin, OVERWRITE his code?")
+            and cmd.confirm("His code may be usefull, continue?")
+            and cmd.confirm("Are you sure?")
         ):
             # origin.push(my.name, force=True)
-            raise RuntimeError("💥 Input this in termial: git push --force") from e
-        typer.echo("⏫ Force-Push CANCELLED")
+            raise cmd.error("Input this in termial: git push --force") from e
+        cmd.cancel()
+        return False
 
-    typer.echo("⏫ Force-Push END")
+    cmd.end()
     return True
 
 
 @app.command()
-def squash(msg: str = "squash") -> None:
+def squash() -> None:
+    cmd = Cmd.SQUASH
+    cmd.start()
     base = find_base()
-    typer.echo("🧹 Squash START")
     reset_commit(base)
-    commit(msg)
-    typer.echo("🧹 Squash END")
+    commit(f"squash to [{base.hexsha[:8]}]")
+    cmd.end()
     force_push()
 
 
 @app.command()
 def abort() -> None:
-    typer.echo("🛑 Abort-Rebase")
+    cmd = Cmd.ABORT
+    cmd.start()
 
     rebase_merge_dir = Path(repo.git_dir) / "rebase-merge"
     rebase_apply_dir = Path(repo.git_dir) / "rebase-apply"
@@ -133,74 +204,64 @@ def abort() -> None:
     in_rebase = rebase_merge_dir.exists() or rebase_apply_dir.exists()
 
     if not in_rebase:
-        typer.echo("🛑 Not in a rebase state, nothing to abort")
+        cmd.info("There is nothing to abort")
         return
 
     try:
         repo.git.rebase(abort=True)
-        typer.echo("✅ Rebase aborted successfully")
     except git.GitCommandError as e:
-        raise RuntimeError("💥 Abort-Rebase FAILED, please find help") from e
+        cmd.fail(e)
+        raise cmd.error("Please find help") from e
+
+    cmd.end()
 
 
 def rebase_commit(c: git.Commit) -> bool:
-    typer.echo("🌳 Rebase START")
+    cmd = Cmd.REBASE
+    cmd.start()
 
     try:
         repo.git.rebase(c, autostash=True)
-    except git.GitCommandError:
-        typer.echo("🚨 Rebase FAILED")
+    except git.GitCommandError as e:
+        cmd.fail(e)
         abort()
         return False
 
-    typer.echo("🌳 Rebase END")
-    return True
-
-
-def pull_rebase() -> bool:
-    typer.echo("🌳 Pull-Rebase START")
-
-    try:
-        origin.pull(rebase=True, autostash=True)
-    except git.GitCommandError:
-        typer.echo("🚨 Pull-Rebase FAILED")
-        abort()
-        return False
-
-    typer.echo("🌳 Pull-Rebase END")
+    cmd.end()
     return True
 
 
 def reset_then_rebase(c: git.Commit, base: git.Commit) -> bool:
     reset_commit(base)
+    commit(f"reset to {base.hexsha[:8]}")
+    cmd = Cmd.REBASE
     if not rebase_commit(c):
-        raise RuntimeError("💥 Please resolve Conflict manually, then 🔄️ Sync")
-
-    typer.echo("🌳 Rebase END")
+        raise cmd.error(f"Please resolve conflicts manually, then {Cmd.SYNC}")
     return True
 
 
 def try_rebase(c: git.Commit, base: git.Commit) -> bool:
+    cmd = Cmd.REBASE
     if not rebase_commit(c):
-        typer.echo("🚨 Found Conflict")
+        cmd.warn("Found Conflict")
         if typer.confirm("🚨 Squash and try again?"):
             return reset_then_rebase(c, base)
-        typer.echo("🌳 Rebase CANCELLED")
+        cmd.cancel()
         return False
-
-    typer.echo("🌳 Rebase END")
     return True
 
 
 def fetch() -> None:
-    typer.echo("🔃 Fetch START")
+    cmd = Cmd.FETCH
+    cmd.start()
     origin.fetch(prune=True, tags=True, prune_tags=True)
-    typer.echo("🔃 Fetch End")
+    cmd.end()
 
 
 @app.command()
 def sync() -> bool:
-    typer.echo("🔄️ Sync START")
+    cmd = Cmd.SYNC
+    cmd.start()
 
     fetch()
 
@@ -222,8 +283,8 @@ def sync() -> bool:
 
         my_origin = origin.refs[my.name]
 
-        my_ahead = len(list(repo.iter_commits(f"{my_origin.commit}..{my.commit}")))
-        my_origin_ahead = len(list(repo.iter_commits(f"{my.commit}..{my_origin.commit}")))
+        my_ahead = count_commits(my_origin.commit, my.commit)
+        my_origin_ahead = count_commits(my.commit, my_origin.commit)
 
         if my_ahead > 0 and my_origin_ahead == 0:
             typer.echo("🔄️ Sync: Push your commits")
