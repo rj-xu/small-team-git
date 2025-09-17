@@ -142,7 +142,7 @@ def push() -> None:
     cmd.end()
 
 
-def reset_to(c: git.Commit, need_commit: bool = True) -> None:
+def reset_to(c: git.Commit, *, need_commit: bool = True) -> None:
     if my.commit == c:
         return
 
@@ -217,7 +217,7 @@ def abort() -> None:
     cmd.end()
 
 
-def rebase_to(c: git.Commit) -> bool:
+def try_rebase(c: git.Commit) -> bool:
     cmd = Cmd.REBASE
     cmd.start()
 
@@ -231,17 +231,17 @@ def rebase_to(c: git.Commit) -> bool:
     return True
 
 
-def try_rebase(c: git.Commit, base: git.Commit) -> bool:
+def reset_and_rebase(c: git.Commit, base: git.Commit) -> bool:
     cmd = Cmd.REBASE
 
-    if rebase_to(c):
+    if try_rebase(c):
         return True
     abort()
 
     cmd.warn("Found 💣 Conflict")
     if cmd.confirm(f"{Cmd.RESET} and {Cmd.REBASE} again?"):
         reset_to(base, need_commit=True)
-        if not rebase_to(c):
+        if not try_rebase(c):
             raise cmd.error(f"You need to resolve conflicts manually, then {Cmd.SYNC}")
         return True
     cmd.cancel()
@@ -267,7 +267,7 @@ def sync() -> bool:
         cmd.warn("Your branch is out-of-date, need to {Cmd.REBASE} later")
 
     if my.name not in origin.refs:
-        if base == master.commit or try_rebase(master.commit, base):
+        if base == master.commit or reset_and_rebase(master.commit, base):
             push()
         else:
             cmd.cancel()
@@ -293,7 +293,7 @@ def sync() -> bool:
             ):
                 force_push()
             elif (cmd.confirm(f"{Cmd.PULL} your-origin branch?")) and (
-                try_rebase(my_origin.commit, find_base(my, my_origin))
+                reset_and_rebase(my_origin.commit, find_base(my, my_origin))
             ):
                 if my.commit != my_origin.commit:
                     push()
@@ -317,7 +317,7 @@ def rebase() -> None:
         return
 
     # origin.pull(master.name, rebase=True, autostash=True)
-    if try_rebase(master.commit, base):
+    if reset_and_rebase(master.commit, base):
         force_push()
 
 
