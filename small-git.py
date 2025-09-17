@@ -71,7 +71,7 @@ class Cmd(StrEnum):
     FETCH      = "🔃 Fetch"
     SYNC       = "🔄️ Sync"
     STASH      = "📁 Stash"
-    SUBMOD     = "📦 Submodule-Update"
+    SUBMOD     = "📦 Submodule"
     # fmt: on
 
     def start(self):
@@ -343,8 +343,7 @@ def stash() -> None:
             if cmd.confirm("Do you want to Drop"):
                 # repo.git.stash("drop")
                 raise cmd.error("Input this in your termial: git stash drop")
-            else:
-                cmd.cancel()
+            cmd.cancel()
         case True, False:
             if cmd.confirm("Do you want to Stash?"):
                 repo.git.stash("push")
@@ -370,6 +369,7 @@ def submod(*, remote: bool = False) -> None:
     cmd.start()
     args = ["update", "--init", "--recursive", "--force"]
     if remote:
+        cmd.warn("Update all submodules to remote HEAD")
         args.append("--remote")
     repo.git.submodule(args)
     cmd.end()
