@@ -110,18 +110,15 @@ def show():
         cmd.cancel()
         cmd.fail(RuntimeError("This is Fail"))
         cmd.end()
-        raise cmd.error("This is Error")
 
 
 @app.command()
 def commit(msg: str = "update") -> None:
+    if not is_dirty():
+        return
+
     cmd = Cmd.COMMIT
     cmd.start()
-
-    if not is_dirty():
-        cmd.info("There is no change")
-        cmd.cancel()
-        return
 
     cmd.info(f"Message: {msg}")
     if not repo.index.diff("HEAD"):
@@ -145,17 +142,23 @@ def push() -> None:
     cmd.end()
 
 
-def reset_commit(c: git.Commit) -> None:
+def reset_to(c: git.Commit, need_commit: bool = True) -> None:
+    if my.commit == c:
+        return
+
     cmd = Cmd.RESET
     cmd.start()
     repo.git.reset(c)
     cmd.end()
 
+    if need_commit:
+        commit(f"reset to {c.hexsha[:8]}")
+
 
 @app.command()
 def reset() -> None:
     base = find_base()
-    reset_commit(base)
+    reset_to(base)
     Cmd.RESET.warn(f"You need to {Cmd.FORCE_PUSH} later")
 
 
@@ -174,7 +177,7 @@ def force_push() -> bool:
             and cmd.confirm("Are you sure?")
         ):
             # origin.push(my.name, force=True)
-            raise cmd.error("Input this in termial: git push --force") from e
+            raise cmd.error("Input: git push --force") from e
         cmd.cancel()
         return False
 
@@ -187,37 +190,34 @@ def squash() -> None:
     cmd = Cmd.SQUASH
     cmd.start()
     base = find_base()
-    reset_commit(base)
-    commit(f"squash to [{base.hexsha[:8]}]")
-    cmd.end()
+    reset_to(base, need_commit=True)
     force_push()
+    cmd.end()
 
 
 @app.command()
 def abort() -> None:
-    cmd = Cmd.ABORT
-    cmd.start()
-
     rebase_merge_dir = Path(repo.git_dir) / "rebase-merge"
     rebase_apply_dir = Path(repo.git_dir) / "rebase-apply"
 
     in_rebase = rebase_merge_dir.exists() or rebase_apply_dir.exists()
 
     if not in_rebase:
-        cmd.info("There is nothing to abort")
-        cmd.cancel()
         return
+
+    cmd = Cmd.ABORT
+    cmd.start()
 
     try:
         repo.git.rebase(abort=True)
     except git.GitCommandError as e:
         cmd.fail(e)
-        raise cmd.error("Please find help") from e
+        raise cmd.error("You need to find help") from e
 
     cmd.end()
 
 
-def rebase_commit(c: git.Commit) -> bool:
+def rebase_to(c: git.Commit) -> bool:
     cmd = Cmd.REBASE
     cmd.start()
 
@@ -231,25 +231,21 @@ def rebase_commit(c: git.Commit) -> bool:
     return True
 
 
-def reset_then_rebase(c: git.Commit, base: git.Commit) -> bool:
-    reset_commit(base)
-    commit(f"reset to {base.hexsha[:8]}")
-    cmd = Cmd.REBASE
-    if not rebase_commit(c):
-        raise cmd.error(f"Please resolve conflicts manually, then {Cmd.SYNC}")
-    return True
-
-
 def try_rebase(c: git.Commit, base: git.Commit) -> bool:
     cmd = Cmd.REBASE
-    if not rebase_commit(c):
-        abort()
-        cmd.warn("Found Conflict")
-        if cmd.confirm(f"{Cmd.RESET} and {Cmd.REBASE} again?"):
-            return reset_then_rebase(c, base)
-        cmd.cancel()
-        return False
-    return True
+
+    if rebase_to(c):
+        return True
+    abort()
+
+    cmd.warn("Found 💣 Conflict")
+    if cmd.confirm(f"{Cmd.RESET} and {Cmd.REBASE} again?"):
+        reset_to(base, need_commit=True)
+        if not rebase_to(c):
+            raise cmd.error(f"You need to resolve conflicts manually, then {Cmd.SYNC}")
+        return True
+    cmd.cancel()
+    return False
 
 
 def fetch() -> None:
@@ -267,45 +263,45 @@ def sync() -> bool:
     fetch()
 
     base = find_base()
+    if base != master.commit:
+        cmd.warn("Your branch is out-of-date, need to {Cmd.REBASE} later")
 
     if my.name not in origin.refs:
         if base == master.commit or try_rebase(master.commit, base):
             push()
         else:
             cmd.cancel()
-            raise cmd.error("You should choose {Cmd.RESET} and {Cmd.REBASE}")
+            raise cmd.error("You need to choose {Cmd.RESET} and {Cmd.REBASE}")
     else:
-        if base != master.commit:
-            cmd.warn("You are not up to date with master, please 🌳 Rebase later")
-
         my_origin = origin.refs[my.name]
 
         my_ahead = count_commits(my_origin.commit, my.commit)
         my_origin_ahead = count_commits(my.commit, my_origin.commit)
 
         if my_ahead > 0 and my_origin_ahead == 0:
-            cmd.info("Push your commits")
+            cmd.info(f"{Cmd.PUSH} your branch")
             push()
         elif my_ahead == 0 and my_origin_ahead > 0:
-            cmd.info("Pull your-origin commits")
+            cmd.info(f"{Cmd.PULL} your-origin branch")
             pull()
         elif my_ahead > 0 and my_origin_ahead > 0:
-            cmd.warn("Found Fork")
-            my_origin_base = find_base(my_origin, master)
+            cmd.warn("Found 🍴 Fork")
 
             # NOTE: never rebase others banch
-            if base.committed_datetime > my_origin_base.committed_datetime:
+            if (base.committed_datetime > find_base(my_origin, master).committed_datetime) or (
+                cmd.confirm(f"{Cmd.PUSH} your branch?")
+            ):
                 force_push()
-            elif cmd.confirm("Keep your-origin code?"):
+            elif (cmd.confirm(f"{Cmd.PULL} your-origin branch?")) and (
                 try_rebase(my_origin.commit, find_base(my, my_origin))
-                push()
-            elif cmd.confirm("Keep your code?"):
-                force_push()
+            ):
+                if my.commit != my_origin.commit:
+                    push()
             else:
                 cmd.cancel()
                 return False
         else:
-            cmd.info("🔄️ Sync: your-orgin is up to date with your-local")
+            cmd.info("Your-origin branch is already up-to-date")
 
     cmd.end()
     return True
@@ -316,48 +312,43 @@ def rebase() -> None:
     if not sync():
         return
 
-    cmd = Cmd.REBASE
-
-    # origin.pull(master.name, rebase=True, autostash=True)
-
     base = find_base()
     if base == master.commit:
-        cmd.info("Already up to date with master")
-        cmd.cancel()
         return
 
+    # origin.pull(master.name, rebase=True, autostash=True)
     if try_rebase(master.commit, base):
         force_push()
 
 
 @app.command()
 def stash() -> None:
-    cmd = Cmd.STASH
-    cmd.start()
-
     stash_cnt = len(cast("str", repo.git.stash("list")).splitlines())
     assert stash_cnt < 2
+
+    cmd = Cmd.STASH
+    cmd.start()
 
     match repo.is_dirty(untracked_files=True), bool(stash_cnt):
         case True, True:
             if cmd.confirm("Do you want to Drop"):
                 # repo.git.stash("drop")
-                raise cmd.error("Input this in your termial: git stash drop")
+                raise cmd.error("Input: git stash drop")
             cmd.cancel()
         case True, False:
             if cmd.confirm("Do you want to Stash?"):
                 repo.git.stash("push")
+                cmd.end()
             else:
                 cmd.cancel()
         case False, True:
             if cmd.confirm("Do you want to Pop?"):
                 repo.git.stash("pop")
+                cmd.end()
             else:
                 cmd.cancel()
         case _:
             raise TypeError
-
-    cmd.end()
 
 
 @app.command()
@@ -378,10 +369,10 @@ def submod(*, remote: bool = False) -> None:
 @app.command()
 def zen() -> None:
     z = [
-        "Always keep the tree structure, linear history",
-        "A commit doesn't matter, the total amount of commits matters",
-        "Only three branches, yours, your origin, master",
-        "Be responsible for your own branch",
+        "Always keep tree-like structure, linear history",
+        "One commit doesn't matter, all commits matter",
+        "Only 3 branches: yours, your-origin and master",
+        "Take ownership of your branch",
         r"         ",
         r"    |    ",
         r"    ●    ",
