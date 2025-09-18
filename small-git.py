@@ -88,7 +88,7 @@ class Cmd(StrEnum):
         typer.secho(f"{self} FAILED", fg=typer.colors.RED)
 
     def info(self, msg: str):
-        typer.echo(f"{self} {msg}")
+        typer.echo(f"{self}: {msg}")
 
     def warn(self, msg: str):
         typer.secho(f"🚨 {msg}", bg=typer.colors.YELLOW)
@@ -158,8 +158,8 @@ def reset_to(c: git.Commit, *, need_commit: bool = True) -> None:
 @app.command()
 def reset() -> None:
     base = find_base()
-    reset_to(base)
-    Cmd.RESET.warn(f"You need to {Cmd.FORCE_PUSH} later")
+    reset_to(base, need_commit=False)
+    Cmd.RESET.warn(f"You need to {Cmd.COMMIT} and {Cmd.FORCE_PUSH} later")
 
 
 @app.command()
@@ -190,7 +190,7 @@ def squash() -> None:
     cmd = Cmd.SQUASH
     cmd.start()
     base = find_base()
-    reset_to(base, need_commit=True)
+    reset_to(base)
     force_push()
     cmd.end()
 
@@ -217,7 +217,7 @@ def abort() -> None:
     cmd.end()
 
 
-def try_rebase(c: git.Commit) -> bool:
+def rebase_to(c: git.Commit) -> bool:
     cmd = Cmd.REBASE
     cmd.start()
 
@@ -231,18 +231,18 @@ def try_rebase(c: git.Commit) -> bool:
     return True
 
 
-def reset_and_rebase(c: git.Commit, base: git.Commit) -> bool:
+def try_rebase(c: git.Commit, base: git.Commit) -> bool:
     cmd = Cmd.REBASE
 
-    if try_rebase(c):
+    if rebase_to(c):
         return True
     abort()
 
     cmd.warn("Found 💣 Conflict")
     if cmd.confirm(f"{Cmd.RESET} and {Cmd.REBASE} again?"):
-        reset_to(base, need_commit=True)
-        if not try_rebase(c):
-            raise cmd.error(f"You need to resolve conflicts manually, then {Cmd.SYNC}")
+        reset_to(base)
+        if not rebase_to(c):
+            raise cmd.error(f"You need to resolve conflict manually, then {Cmd.SYNC}")
         return True
     cmd.cancel()
     return False
@@ -263,16 +263,18 @@ def sync() -> bool:
     fetch()
 
     base = find_base()
-    if base != master.commit:
-        cmd.warn("Your branch is out-of-date, need to {Cmd.REBASE} later")
 
     if my.name not in origin.refs:
-        if base == master.commit or reset_and_rebase(master.commit, base):
+        if base == master.commit or try_rebase(master.commit, base):
             push()
         else:
+            cmd.warn("You need to choose {Cmd.RESET} and {Cmd.REBASE}")
             cmd.cancel()
-            raise cmd.error("You need to choose {Cmd.RESET} and {Cmd.REBASE}")
+            return False
     else:
+        if base != master.commit:
+            cmd.warn("Your branch is out-of-date, need to {Cmd.REBASE} later")
+
         my_origin = origin.refs[my.name]
 
         my_ahead = count_commits(my_origin.commit, my.commit)
@@ -289,15 +291,16 @@ def sync() -> bool:
 
             # NOTE: never rebase others banch
             if (base.committed_datetime > find_base(my_origin, master).committed_datetime) or (
-                cmd.confirm(f"{Cmd.PUSH} your branch?")
+                cmd.confirm(f"{Cmd.FORCE_PUSH} your branch?")
             ):
                 force_push()
             elif (cmd.confirm(f"{Cmd.PULL} your-origin branch?")) and (
-                reset_and_rebase(my_origin.commit, find_base(my, my_origin))
+                try_rebase(my_origin.commit, find_base(my, my_origin))
             ):
                 if my.commit != my_origin.commit:
                     push()
             else:
+                cmd.warn("You need to choose {Cmd.FORCE_PUSH} or {Cmd.PULL}")
                 cmd.cancel()
                 return False
         else:
@@ -317,7 +320,7 @@ def rebase() -> None:
         return
 
     # origin.pull(master.name, rebase=True, autostash=True)
-    if reset_and_rebase(master.commit, base):
+    if try_rebase(master.commit, base):
         force_push()
 
 
@@ -329,7 +332,7 @@ def stash() -> None:
     cmd = Cmd.STASH
     cmd.start()
 
-    match repo.is_dirty(untracked_files=True), bool(stash_cnt):
+    match is_dirty(), stash_cnt:
         case True, True:
             if cmd.confirm("Do you want to Drop"):
                 # repo.git.stash("drop")
@@ -362,7 +365,11 @@ def submod(*, remote: bool = False) -> None:
     if remote:
         cmd.warn("Update all submodules to remote HEAD")
         args.append("--remote")
-    repo.git.submodule(args)
+    try:
+        repo.git.submodule(args)
+    except git.GitCommandError as e:
+        cmd.fail(e)
+        raise cmd.error("You need to find help") from e
     cmd.end()
 
 
