@@ -1,0 +1,38 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        // Git
+        {
+            "label": "🔄️ Sync 同步远程分支",
+            "type": "shell",
+            "command": ".venv/Scripts/python scripts/small-git.py sync",
+        },
+        {
+            "label": "🌳 Rebase 变基: 更新基点",
+            "type": "shell",
+            "command": ".venv/Scripts/python scripts/small-git.py rebase",
+        },
+        {
+            "label": "🪓 Reset 重置: 保留代码并回到基点",
+            "type": "shell",
+            "command": ".venv/Scripts/python scripts/small-git.py reset",
+        },
+        {
+            "label": "⏫ Force-Push 强制推送: Rebase 或 Reset 后覆盖远程分支",
+            "type": "shell",
+            "command": ".venv/Scripts/python scripts/small-git.py force-push",
+        },
+        {
+            "label": "📦 Submodule 更新所有子模块",
+            "type": "shell",
+            "command": ".venv/Scripts/python scripts/small-git.py submod",
+        },
+        {
+            "label": "📦❗ Submodule-Remote 强制更新所有子模块到远程最新",
+            "type": "shell",
+            "command": ".venv/Scripts/python scripts/small-git.py submod --remote",
+        }
+    ]
+}
